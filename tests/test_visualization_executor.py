@@ -90,7 +90,7 @@ def test_visualization_executor():
                 mock_response
             )
 
-            decision = route_question(question)
+            decision = route_question(question,df)
 
             figure = execute_visualization(
                 df,

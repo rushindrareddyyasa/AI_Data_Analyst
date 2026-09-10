@@ -1,8 +1,9 @@
 import json
 from unittest.mock import patch
 
+from ai_data_analyst.ingestion.loader import load_csv
 from ai_data_analyst.llm.router import route_question
-
+df = load_csv("data/raw/sales.csv")
 
 def test_router_questions():
 
@@ -98,7 +99,7 @@ def test_router_questions():
 
             mock_generate.return_value.text = json.dumps(mock_response)
 
-            decision = route_question(question)
+            decision = route_question(question,df)
 
             assert decision.tool == mock_response["tool"]
             assert decision.operation == mock_response["operation"]

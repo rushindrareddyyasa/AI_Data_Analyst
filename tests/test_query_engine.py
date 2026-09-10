@@ -17,7 +17,7 @@ def test_answer_question():
 
     expected_sql = """
     SELECT region, SUM(sales) AS total_sales
-    FROM sales
+    FROM dataset
     GROUP BY region
     ORDER BY total_sales DESC
     LIMIT 1;
@@ -39,12 +39,20 @@ def test_answer_question():
         mock_explain_result.return_value = expected_answer
 
         answer = answer_question(
+            df,
             engine,
             question
         )
 
         # Verify final answer
-        assert answer == expected_answer
+        assert answer["answer"] == expected_answer
+
+        # Verify generated SQL
+        assert answer["sql"] == expected_sql
+
+        # Verify SQL result
+        assert answer["result"].iloc[0]["region"] == "West"
+        assert answer["result"].iloc[0]["total_sales"] == 4835478.19
 
         # Verify SQL generation was called
         mock_generate_sql.assert_called_once()

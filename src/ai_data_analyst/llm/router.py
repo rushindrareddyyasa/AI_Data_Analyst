@@ -47,65 +47,97 @@ class RouteDecision:
 
 def route_question(
     question: str,
-    df: pd.DataFrame,
+    df: Optional[pd.DataFrame] = None,
+    knowledge_base_available: bool = False,
 ) -> RouteDecision:
     """
     Analyze a user's question and determine which
     tool should handle it.
 
-    The router is dataset-aware and uses the actual
-    uploaded dataset schema as the source of truth.
+    Supported sources:
+
+    1. Structured dataset
+    2. Document knowledge base
+
+    Supported tools:
+
+    - SQL
+    - Python
+    - Visualization
+    - RAG
+    - None
     """
 
-    # --------------------------------------------------
-    # Validate question
-    # --------------------------------------------------
+    # ==================================================
+    # VALIDATE QUESTION
+    # ==================================================
 
-    if not question.strip():
+    if not question or not question.strip():
+
         raise ValueError(
             "Question cannot be empty."
         )
 
-    if df.empty:
+
+    # ==================================================
+    # DETECT AVAILABLE SOURCES
+    # ==================================================
+
+    dataset_available = (
+        df is not None
+        and isinstance(df, pd.DataFrame)
+        and not df.empty
+    )
+
+    if (
+        not dataset_available
+        and not knowledge_base_available
+    ):
+
         raise ValueError(
-            "Dataset cannot be empty."
+            "No dataset or knowledge base is available."
         )
 
-    # --------------------------------------------------
-    # Generate dynamic dataset information
-    # --------------------------------------------------
 
-    dataset_schema = get_dataset_schema(df)
+    # ==================================================
+    # DATASET INFORMATION
+    # ==================================================
 
-    dataset_columns = df.columns.tolist()
+    if dataset_available:
 
-    numerical_columns = (
-        df.select_dtypes(include="number")
-        .columns
-        .tolist()
-    )
-
-    categorical_columns = (
-        df.select_dtypes(
-            include=["object", "string"]
+        dataset_schema = get_dataset_schema(
+            df
         )
-        .columns
-        .tolist()
-    )
 
-    date_columns = (
-        df.select_dtypes(
-            include=["datetime"]
+        dataset_columns = (
+            df.columns.tolist()
         )
-        .columns
-        .tolist()
-    )
 
-    # --------------------------------------------------
-    # Create dataset metadata for LLM
-    # --------------------------------------------------
+        numerical_columns = (
+            df.select_dtypes(
+                include="number"
+            )
+            .columns
+            .tolist()
+        )
 
-    dataset_information = f"""
+        categorical_columns = (
+            df.select_dtypes(
+                include=["object", "string"]
+            )
+            .columns
+            .tolist()
+        )
+
+        date_columns = (
+            df.select_dtypes(
+                include=["datetime", "datetimetz"]
+            )
+            .columns
+            .tolist()
+        )
+
+        dataset_information = f"""
 AVAILABLE DATASET COLUMNS
 -------------------------
 {dataset_columns}
@@ -127,6 +159,57 @@ DATASET SCHEMA
 {dataset_schema}
 """
 
+    else:
+
+        dataset_information = """
+NO STRUCTURED DATASET IS CURRENTLY AVAILABLE.
+
+The user has not uploaded a dataset.
+
+Therefore:
+
+- Do NOT select SQL.
+- Do NOT select Python analysis.
+- Do NOT select Visualization requiring dataset data.
+- Use RAG if the uploaded documents can answer the question.
+- Otherwise select none.
+"""
+
+
+    # ==================================================
+    # KNOWLEDGE BASE INFORMATION
+    # ==================================================
+
+    if knowledge_base_available:
+
+        knowledge_base_status = """
+AVAILABLE
+
+Indexed documents are available for RAG.
+
+The documents may contain:
+
+- policies
+- procedures
+- guidelines
+- manuals
+- reports
+- business rules
+- technical documentation
+- regulations
+- other textual business knowledge
+"""
+
+    else:
+
+        knowledge_base_status = """
+NOT AVAILABLE
+
+There are currently no indexed documents available
+for RAG.
+"""
+
+
     # ==================================================
     # ROUTER PROMPT
     # ==================================================
@@ -134,24 +217,16 @@ DATASET SCHEMA
     prompt = f"""
 You are the routing system for a generic AI Data Analyst.
 
-Your job is to analyze the user's question and return
+Your task is to analyze the user's question and return
 ONE structured JSON routing decision.
 
-You are NOT restricted to a sales dataset.
+The application can have TWO information sources:
 
-The user may upload any structured dataset such as:
+1. STRUCTURED DATASET
+2. UNSTRUCTURED DOCUMENT KNOWLEDGE BASE
 
-- Sales
-- Finance
-- Employees
-- Students
-- Customers
-- Healthcare
-- Marketing
-- Operations
-- Manufacturing
-- Logistics
-- Any other tabular dataset
+You must determine which source can answer the question
+and which tool should be used.
 
 
 ==================================================
@@ -162,203 +237,248 @@ USER QUESTION
 
 
 ==================================================
-ACTUAL DATASET INFORMATION
+STRUCTURED DATASET
 ==================================================
 
 {dataset_information}
 
 
 ==================================================
+DOCUMENT KNOWLEDGE BASE
+==================================================
+
+{knowledge_base_status}
+
+
+==================================================
+SOURCE AVAILABILITY
+==================================================
+
+Structured Dataset Available:
+{dataset_available}
+
+Document Knowledge Base Available:
+{knowledge_base_available}
+
+
+==================================================
 CRITICAL DATASET RULE
 ==================================================
 
-The ACTUAL DATASET INFORMATION above is the
-ONLY source of truth for dataset columns.
+The dataset information above is the ONLY source of
+truth for structured data.
 
 Follow these rules:
 
-1. Use only columns that exist in the dataset.
+1. Use only columns that actually exist.
 
-2. Use column names EXACTLY as they appear.
+2. Use column names EXACTLY as provided.
 
 3. Preserve column capitalization.
 
-4. NEVER invent a column.
+4. NEVER invent columns.
 
 5. NEVER assume common columns such as:
-   sales, profit, revenue, region, category,
-   date, customer, salary, etc.
-
-6. If the dataset contains:
-
-   SALES
-
-   and the user asks:
-
-   "What is the total sales?"
-
-   use:
-
-   value_column = "SALES"
-
-7. If the dataset contains:
 
    sales
+   profit
+   revenue
+   region
+   category
+   date
+   customer
+   salary
 
-   then use:
+6. If the requested information does not exist in the
+   dataset, do NOT force SQL, Python, or Visualization.
 
-   value_column = "sales"
-
-8. If the requested concept does not have a suitable
-   column, metric, or information in the dataset,
-   mark the question as NOT ANSWERABLE.
+7. A question that cannot be answered by the dataset
+   may still be answerable by the document knowledge base.
 
 
 ==================================================
-QUESTION-DATASET RELEVANCE
+TWO-SOURCE ANSWERABILITY
 ==================================================
 
-Before selecting a tool, determine whether the
-user's question can actually be answered using
-the available dataset.
+Determine whether the question can be answered using
+ANY currently available source.
 
-Set:
+SOURCE 1 — DATASET
 
-answerable = true
+Use the dataset for:
 
-when the dataset contains the information required
-to answer the question.
+- numerical calculations
+- aggregations
+- filtering
+- grouping
+- rankings
+- statistics
+- structured records
+- dataset-specific visualizations
 
-Set:
 
-answerable = false
+SOURCE 2 — DOCUMENT KNOWLEDGE BASE
 
-when the question asks for information that is not
-represented in the dataset.
+Use the knowledge base for information contained
+in uploaded documents.
 
 Examples:
 
-Dataset:
+- policies
+- procedures
+- guidelines
+- manuals
+- regulations
+- business rules
+- reports
+- documentation
+- textual explanations
 
-Destination
-State
-Category
-Average Budget
+
+IMPORTANT:
+
+If the dataset cannot answer the question, DO NOT
+immediately select none.
+
+First determine whether the document knowledge base
+can answer it.
+
+
+==================================================
+RAG RULE
+==================================================
+
+If:
+
+Document Knowledge Base Available = true
+
+RAG may be selected.
+
+If:
+
+Document Knowledge Base Available = false
+
+RAG MUST NOT be selected.
+
+
+==================================================
+RAG EXAMPLES
+==================================================
 
 Question:
 
-"What is the average budget?"
+"What does the hiring process look like?"
 
+If relevant uploaded documents are available:
+
+tool = "rag"
 answerable = true
 
 
-Dataset:
+Question:
 
-Destination
-State
-Category
-Average Budget
+"What does the uploaded policy say about discounts?"
+
+If relevant uploaded documents are available:
+
+tool = "rag"
+answerable = true
+
 
 Question:
 
-"What is the employee count?"
+"When is a region considered high-performing?"
 
-answerable = false
+If a relevant business document contains this
+information:
 
-reason:
+tool = "rag"
+answerable = true
 
-"The dataset does not contain employee information."
-
-
-Dataset:
-
-Destination
-State
-Category
-Average Budget
 
 Question:
 
-"What is the average employee salary?"
+"What is the company's employee policy?"
 
+If no documents are available:
+
+tool = "none"
 answerable = false
 
-reason:
+reason should explain that no document knowledge
+base is available.
 
-"The dataset does not contain employee salary information."
+
+==================================================
+DATASET EXAMPLES
+==================================================
+
+Dataset:
+
+region
+sales
+profit
+
+Question:
+
+"What is the total sales by region?"
+
+tool = "sql"
+answerable = true
+
+
+Question:
+
+"What is the average sales?"
+
+tool = "python"
+answerable = true
+
+
+Question:
+
+"Show a bar chart of sales by region."
+
+tool = "visualization"
+answerable = true
 
 
 ==================================================
 COUNT RULE
 ==================================================
 
-Do NOT interpret every word containing "count"
-as COUNT(*).
+Do NOT interpret every question containing
+the word "count" as COUNT(*).
 
-There is an important difference between:
-
-"How many records are there?"
-
-and:
-
-"How many employees are there?"
+Example:
 
 "How many records are there?"
 
 means:
 
-count the rows in the dataset.
+count dataset rows.
 
 Therefore:
 
-answerable = true
-operation = count
+tool = "sql"
+operation = "count"
 
 
 But:
 
 "How many employees are there?"
 
-requires employee-related information.
+requires employee information.
 
-If employee information does not exist:
+If employee information does not exist in the
+dataset, do NOT count dataset rows.
 
+First check whether documents can answer it.
+
+If neither source can answer it:
+
+tool = "none"
 answerable = false
-
-
-Similarly:
-
-"How many customers are there?"
-
-should only be answered as a customer count
-if the dataset contains customer-related information.
-
-Do not blindly return the total number of rows.
-
-
-==================================================
-ANSWERABILITY RULES
-==================================================
-
-Set answerable = false when:
-
-- the requested entity does not exist in the dataset
-- the requested metric does not exist and cannot
-  reasonably be derived from available columns
-- the question requires information outside the dataset
-- the question refers to a different business domain
-- answering would require inventing a column
-
-When answerable = false:
-
-1. Do not invent a column.
-2. Do not select a fabricated column.
-3. Do not select SQL, Python, or visualization
-   for executing the question.
-4. Set tool = "none".
-5. Set operation = null.
-6. Set relevant analysis fields to null.
-7. Provide a short explanation in reason.
 
 
 ==================================================
@@ -372,21 +492,24 @@ Use SQL for structured database questions such as:
 
 - totals
 - rankings
-- top/bottom records
+- top records
+- bottom records
 - filtering
 - counting
-- grouped database queries
+- grouped queries
 - aggregations
 - selecting records
-- finding highest/lowest values
+- highest values
+- lowest values
 
 
 2. PYTHON
 ---------
 
-Use Python for statistical and analytical operations such as:
+Use Python for analytical/statistical operations:
 
 - mean
+- average
 - median
 - standard deviation
 - sum
@@ -394,7 +517,6 @@ Use Python for statistical and analytical operations such as:
 - maximum
 - count
 - correlation
-- statistical analysis
 - grouped analysis
 - filtered analysis
 
@@ -402,7 +524,7 @@ Use Python for statistical and analytical operations such as:
 3. VISUALIZATION
 ----------------
 
-Use visualization when the user explicitly asks for:
+Use visualization when the user explicitly requests:
 
 - chart
 - graph
@@ -417,93 +539,80 @@ Use visualization when the user explicitly asks for:
 4. RAG
 ------
 
-Use RAG when the question requires information
-from unstructured documents.
+Use RAG when the answer should come from uploaded
+unstructured documents.
 
-Examples:
 
-- company policies
-- business rules
-- guidelines
-- procedures
-- documentation
-- regulations
-- internal instructions
-- text-based knowledge
+5. NONE
+-------
 
-RAG is NOT for numerical analysis of the uploaded
-structured dataset.
+Use none when no available source can answer
+the question.
 
 
 ==================================================
 ROUTING PRIORITY
 ==================================================
 
-Follow these rules in order.
+RULE 1 — EXPLICIT VISUALIZATION
+--------------------------------
 
-RULE 0
-------
-
-First determine whether the question is answerable
-from the dataset.
-
-If not:
-
-tool = "none"
-answerable = false
-
-
-RULE 1
-------
-
-If the user explicitly requests a:
+If the user explicitly asks for:
 
 - chart
 - graph
 - plot
 - visualization
+- bar chart
+- line chart
+- pie chart
+- scatter plot
 
-then:
+use:
 
 tool = "visualization"
 
+ONLY when the required data exists in the dataset.
 
-RULE 2
-------
+If the required chart data does not exist:
 
-If the user asks about:
+tool = "none"
 
-- policies
-- documents
-- procedures
-- guidelines
-- company rules
-- internal documentation
+UNLESS the requested information can be retrieved
+from documents in a way that supports the requested
+visualization.
 
-then:
+
+RULE 2 — DOCUMENT KNOWLEDGE
+----------------------------
+
+If the question requires information from uploaded
+documents AND the knowledge base is available:
 
 tool = "rag"
+answerable = true
 
 
-RULE 3
-------
+RULE 3 — STATISTICAL ANALYSIS
+-----------------------------
 
-If the question requires statistical analysis such as:
+If the question requires:
 
 - average
+- mean
 - median
 - standard deviation
 - correlation
 
-then:
+and the required data exists:
 
 tool = "python"
 
 
-RULE 4
-------
+RULE 4 — STRUCTURED DATA
+------------------------
 
-For ordinary structured-data questions such as:
+For structured questions such as:
 
 - total
 - ranking
@@ -518,13 +627,29 @@ use:
 tool = "sql"
 
 
+RULE 5 — NOT ANSWERABLE
+-----------------------
+
+If neither available source can answer the question:
+
+tool = "none"
+answerable = false
+
+Provide a short explanation in:
+
+reason
+
+
 ==================================================
 PYTHON OPERATIONS
 ==================================================
 
 Map user language to operations:
 
-average / average value
+average
+→ mean
+
+average value
 → mean
 
 mean
@@ -548,13 +673,22 @@ total
 sum
 → sum
 
-minimum / lowest
+minimum
 → min
 
-maximum / highest
+lowest
+→ min
+
+maximum
 → max
 
-count / number of records
+highest
+→ max
+
+count
+→ count
+
+number of records
 → count
 
 
@@ -569,12 +703,14 @@ group_column
 value_column
 operation
 
-For example, if the actual dataset contains:
+Example:
+
+Dataset:
 
 department
 salary
 
-and the user asks:
+Question:
 
 "average salary by department"
 
@@ -584,10 +720,6 @@ tool = "python"
 operation = "mean"
 group_column = "department"
 value_column = "salary"
-
-IMPORTANT:
-
-Use the actual dataset column names.
 
 
 ==================================================
@@ -602,12 +734,14 @@ filter_value
 value_column
 operation
 
-For example, if the dataset contains:
+Example:
+
+Dataset:
 
 department
 salary
 
-and the user asks:
+Question:
 
 "average salary in the IT department"
 
@@ -658,145 +792,41 @@ Use line charts for:
 SCATTER PLOT
 ------------
 
-Use scatter plots for:
+Use scatter plots for relationships between
+two numerical variables.
 
-- relationships between two numerical variables
-
-
-For scatter plots:
-
-x_column = first numerical variable
-y_column = second numerical variable
-
-Both columns MUST exist in the dataset.
+Both x_column and y_column MUST exist.
 
 
 ==================================================
 DATE/TIME RULES
 ==================================================
 
-Do NOT assume a column called:
+Do NOT assume columns such as:
 
-order_date
 date
+order_date
 month
 year
 quarter
 
-Instead:
+Look at the actual DATE/TIME COLUMNS.
 
-1. Look at DATE/TIME COLUMNS from the actual dataset.
+If the user asks for time-based analysis:
 
-2. If the user asks for time-based analysis,
-   select an actual date/time column.
+date_column = actual dataset date/time column
 
-3. Use:
+time_granularity must be one of:
 
 day
 month
 year
 
-for time_granularity.
-
-4. If the user specifies a year such as 2025,
-   set:
+If the user specifies a year such as 2025:
 
 filter_year = 2025
 
-5. Do NOT create fake columns such as:
-
-month
-year
-quarter
-
-in group_column or filter_column.
-
-6. Use date_column for the actual date column.
-
-
-==================================================
-CHART ROUTING EXAMPLES
-==================================================
-
-These examples are illustrative only.
-
-They do NOT define the available dataset columns.
-
-Example:
-
-User:
-"Show the average value by department as a bar chart."
-
-If the actual dataset contains:
-
-department
-salary
-
-then:
-
-tool = "visualization"
-operation = "mean"
-group_column = "department"
-value_column = "salary"
-chart_type = "bar"
-
-
-Example:
-
-User:
-"Show the relationship between age and salary."
-
-If the actual dataset contains:
-
-age
-salary
-
-then:
-
-tool = "visualization"
-chart_type = "scatter"
-x_column = "age"
-y_column = "salary"
-
-
-Example:
-
-User:
-"Show the monthly revenue trend."
-
-If the actual dataset contains:
-
-revenue
-transaction_date
-
-then:
-
-tool = "visualization"
-operation = "sum"
-value_column = "revenue"
-chart_type = "line"
-date_column = "transaction_date"
-time_granularity = "month"
-
-
-==================================================
-RAG ROUTING
-==================================================
-
-If the question requires information contained
-in company documents:
-
-tool = "rag"
-
-Examples:
-
-"When is a region considered high-performing?"
-
-"What is the company discount policy?"
-
-"What does the employee handbook say about leave?"
-
-"What are the internal reporting guidelines?"
+Do NOT invent date-related columns.
 
 
 ==================================================
@@ -816,11 +846,13 @@ If a field is not required:
 
 return null.
 
-If the question is not answerable:
+If:
 
-tool must be "none"
-answerable must be false
-reason must explain why.
+answerable = false
+
+then:
+
+tool = "none"
 
 
 ==================================================
@@ -869,6 +901,7 @@ JSON FORMAT
 }}
 """
 
+
     # ==================================================
     # CALL GEMINI
     # ==================================================
@@ -879,6 +912,7 @@ JSON FORMAT
     )
 
     response_text = response.text.strip()
+
 
     # ==================================================
     # REMOVE MARKDOWN CODE BLOCK
@@ -893,13 +927,16 @@ JSON FORMAT
             .strip()
         )
 
+
     # ==================================================
     # PARSE JSON
     # ==================================================
 
     try:
 
-        data = json.loads(response_text)
+        data = json.loads(
+            response_text
+        )
 
     except json.JSONDecodeError as error:
 
@@ -908,19 +945,21 @@ JSON FORMAT
             f"{response_text}"
         ) from error
 
+
     # ==================================================
-    # DETERMINISTIC FALLBACKS
+    # NORMALIZE TOOL
     # ==================================================
 
-    question_lower = question.lower()
+    tool = data.get(
+        "tool"
+    )
 
-    if (
-        "standard deviation" in question_lower
-        or "std deviation" in question_lower
-        or "standard dev" in question_lower
-    ):
+    if isinstance(tool, str):
 
-        data["operation"] = "std"
+        tool = tool.lower().strip()
+
+        data["tool"] = tool
+
 
     # ==================================================
     # NORMALIZE ANSWERABILITY
@@ -931,19 +970,89 @@ JSON FORMAT
         True,
     )
 
-    # Gemini may occasionally return strings
-    # instead of a real boolean.
-
-    if isinstance(answerable, str):
+    if isinstance(
+        answerable,
+        str,
+    ):
 
         answerable = (
-            answerable.lower()
-            in {"true", "yes", "1"}
+            answerable.lower().strip()
+            in {
+                "true",
+                "yes",
+                "1",
+            }
         )
 
-    # --------------------------------------------------
-    # If not answerable, force tool to none
-    # --------------------------------------------------
+
+    # ==================================================
+    # DETERMINISTIC OPERATION FIX
+    # ==================================================
+
+    question_lower = (
+        question.lower()
+    )
+
+    if (
+        "standard deviation"
+        in question_lower
+        or "std deviation"
+        in question_lower
+        or "standard dev"
+        in question_lower
+    ):
+
+        data["operation"] = "std"
+
+
+    # ==================================================
+    # VALIDATE RAG AVAILABILITY
+    # ==================================================
+
+    if data.get("tool") == "rag":
+
+        if not knowledge_base_available:
+
+            answerable = False
+
+            data["tool"] = "none"
+
+            data["reason"] = (
+                "No document knowledge base is "
+                "currently available to answer "
+                "this question."
+            )
+
+
+    # ==================================================
+    # VALIDATE DATASET-BASED TOOLS
+    # ==================================================
+
+    dataset_tools = {
+        "sql",
+        "python",
+        "visualization",
+    }
+
+    if (
+        data.get("tool") in dataset_tools
+        and not dataset_available
+    ):
+
+        answerable = False
+
+        data["tool"] = "none"
+
+        data["reason"] = (
+            "This question requires structured "
+            "dataset information, but no dataset "
+            "is currently available."
+        )
+
+
+    # ==================================================
+    # HANDLE NOT ANSWERABLE
+    # ==================================================
 
     if not answerable:
 
@@ -954,9 +1063,11 @@ JSON FORMAT
         data["value_column"] = None
         data["filter_column"] = None
         data["filter_value"] = None
+
         data["chart_type"] = None
         data["x_column"] = None
         data["y_column"] = None
+
         data["date_column"] = None
         data["time_granularity"] = None
         data["filter_year"] = None
@@ -965,26 +1076,67 @@ JSON FORMAT
 
             data["reason"] = (
                 "The question cannot be answered "
-                "using the uploaded dataset."
+                "using the available data sources."
             )
+
 
     # ==================================================
     # RETURN ROUTE DECISION
     # ==================================================
 
     return RouteDecision(
-        tool=data.get("tool"),
+        tool=data.get(
+            "tool",
+            "none",
+        ),
+
         answerable=answerable,
-        reason=data.get("reason"),
-        operation=data.get("operation"),
-        group_column=data.get("group_column"),
-        value_column=data.get("value_column"),
-        filter_column=data.get("filter_column"),
-        filter_value=data.get("filter_value"),
-        chart_type=data.get("chart_type"),
-        x_column=data.get("x_column"),
-        y_column=data.get("y_column"),
-        date_column=data.get("date_column"),
-        time_granularity=data.get("time_granularity"),
-        filter_year=data.get("filter_year"),
+
+        reason=data.get(
+            "reason"
+        ),
+
+        operation=data.get(
+            "operation"
+        ),
+
+        group_column=data.get(
+            "group_column"
+        ),
+
+        value_column=data.get(
+            "value_column"
+        ),
+
+        filter_column=data.get(
+            "filter_column"
+        ),
+
+        filter_value=data.get(
+            "filter_value"
+        ),
+
+        chart_type=data.get(
+            "chart_type"
+        ),
+
+        x_column=data.get(
+            "x_column"
+        ),
+
+        y_column=data.get(
+            "y_column"
+        ),
+
+        date_column=data.get(
+            "date_column"
+        ),
+
+        time_granularity=data.get(
+            "time_granularity"
+        ),
+
+        filter_year=data.get(
+            "filter_year"
+        ),
     )

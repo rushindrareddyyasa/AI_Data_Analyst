@@ -20,7 +20,7 @@ for question in questions:
     print("\n========================================")
     print(f"QUESTION: {question}")
 
-    decision = route_question(question)
+    decision = route_question(question,df)
 
     print("\nROUTING DECISION:")
     print(decision)

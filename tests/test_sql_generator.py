@@ -1,18 +1,20 @@
 from unittest.mock import patch
 
+from ai_data_analyst.ingestion.loader import load_csv
 from ai_data_analyst.sql.generator import generate_sql
-from ai_data_analyst.sql.schema import get_sales_schema
+from ai_data_analyst.sql.schema import get_dataset_schema
 
 
 def test_generate_sql():
 
-    schema = get_sales_schema()
+    df = load_csv("data/raw/sales.csv")
+    schema = get_dataset_schema(df)
 
     question = "Which region generated the highest sales?"
 
     expected_sql = """
     SELECT region, SUM(sales) AS total_sales
-    FROM sales
+    FROM dataset
     GROUP BY region
     ORDER BY total_sales DESC
     LIMIT 1;

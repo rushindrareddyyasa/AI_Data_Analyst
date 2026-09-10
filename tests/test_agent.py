@@ -127,7 +127,7 @@ def test_agent():
 
                 mock_sql.return_value = """
                 SELECT region, SUM(sales) AS total_sales
-                FROM sales
+                FROM dataset
                 GROUP BY region
                 ORDER BY total_sales DESC
                 LIMIT 1;

@@ -13,35 +13,73 @@ def answer_question(
     question: str,
 ):
     """
-    Answer a user's question using the active dataset.
+    Generate, validate, execute, and explain a SQL query.
+
+    Returns both the final answer and the SQL query
+    used to produce that answer.
     """
 
+    # ==================================================
+    # GENERATE DYNAMIC SCHEMA
+    # ==================================================
+
     schema = get_dataset_schema(df)
+
+    # ==================================================
+    # GENERATE SQL
+    # ==================================================
 
     sql = generate_sql(
         schema=schema,
         question=question,
     )
 
-    print("\n========== GENERATED SQL ==========\n")
+    print(
+        "\n========== GENERATED SQL ==========\n"
+    )
+
     print(sql)
 
+    # ==================================================
+    # VALIDATE SQL
+    # ==================================================
+
     if not validate_sql(sql):
+
         raise ValueError(
             "Generated SQL query is unsafe!"
         )
+
+    # ==================================================
+    # EXECUTE SQL
+    # ==================================================
 
     result = execute_sql(
         engine=engine,
         sql=sql,
     )
 
-    print("\n========== SQL RESULT ==========\n")
+    print(
+        "\n========== SQL RESULT ==========\n"
+    )
+
     print(result)
+
+    # ==================================================
+    # EXPLAIN RESULT
+    # ==================================================
 
     answer = explain_result(
         question,
         result,
     )
 
-    return answer
+    # ==================================================
+    # RETURN EVERYTHING
+    # ==================================================
+
+    return {
+        "answer": answer,
+        "sql": sql,
+        "result": result,
+    }

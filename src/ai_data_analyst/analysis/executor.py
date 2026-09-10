@@ -6,9 +6,99 @@ from ai_data_analyst.analysis.analyzer import (
 )
 
 
+# ==================================================
+# SUPPORTED OPERATIONS
+# ==================================================
+
+SUPPORTED_OPERATIONS = {
+    "mean",
+    "median",
+    "sum",
+    "min",
+    "max",
+    "count",
+    "std",
+}
+
+
+# ==================================================
+# GENERATE PYTHON CODE
+# ==================================================
+
+def generate_analysis_code(
+    decision,
+) -> str:
+    """
+    Generate a readable representation of the
+    Pandas operation selected by the router.
+
+    This code is generated from the validated
+    routing decision. It represents the logic
+    executed by the analysis engine.
+    """
+
+    operation = decision.operation
+    value_column = decision.value_column
+
+    if operation not in SUPPORTED_OPERATIONS:
+        raise ValueError(
+            f"Unsupported analysis operation: {operation}"
+        )
+
+    if not value_column:
+        raise ValueError(
+            "Python analysis requires value_column."
+        )
+
+    # ----------------------------------------------
+    # FILTERED ANALYSIS
+    # ----------------------------------------------
+
+    if decision.filter_column:
+
+        filter_column = decision.filter_column
+        filter_value = decision.filter_value
+
+        return (
+            f"result = df[\n"
+            f"    df['{filter_column}'] == "
+            f"{filter_value!r}\n"
+            f"]['{value_column}'].{operation}()"
+        )
+
+    # ----------------------------------------------
+    # GROUPED ANALYSIS
+    # ----------------------------------------------
+
+    if decision.group_column:
+
+        group_column = decision.group_column
+
+        return (
+            f"result = (\n"
+            f"    df.groupby('{group_column}')"
+            f"['{value_column}']"
+            f".{operation}()"
+            f".reset_index()\n"
+            f")"
+        )
+
+    # ----------------------------------------------
+    # SIMPLE AGGREGATION
+    # ----------------------------------------------
+
+    return (
+        f"result = df['{value_column}'].{operation}()"
+    )
+
+
+# ==================================================
+# EXECUTE ANALYSIS
+# ==================================================
+
 def execute_analysis(
     df: pd.DataFrame,
-    decision
+    decision,
 ):
     """
     Execute a Python/Pandas analysis based on
@@ -18,30 +108,20 @@ def execute_analysis(
         Scalar value or pandas DataFrame.
     """
 
-    # --------------------------------
-    # SUPPORTED OPERATIONS
-    # --------------------------------
-
-    supported_operations = {
-        "mean",
-        "median",
-        "sum",
-        "min",
-        "max",
-        "count",
-        "std",
-    }
+    # ----------------------------------------------
+    # VALIDATE OPERATION
+    # ----------------------------------------------
 
     operation = decision.operation
 
-    if operation not in supported_operations:
+    if operation not in SUPPORTED_OPERATIONS:
         raise ValueError(
             f"Unsupported analysis operation: {operation}"
         )
 
-    # --------------------------------
-    # VALUE COLUMN
-    # --------------------------------
+    # ----------------------------------------------
+    # VALIDATE VALUE COLUMN
+    # ----------------------------------------------
 
     if not decision.value_column:
         raise ValueError(
@@ -53,15 +133,16 @@ def execute_analysis(
             f"Column not found: {decision.value_column}"
         )
 
-    # --------------------------------
+    # ----------------------------------------------
     # FILTERED ANALYSIS
-    # --------------------------------
+    # ----------------------------------------------
 
     if decision.filter_column:
 
         if decision.filter_column not in df.columns:
             raise ValueError(
-                f"Column not found: {decision.filter_column}"
+                f"Column not found: "
+                f"{decision.filter_column}"
             )
 
         if decision.filter_value is None:
@@ -80,15 +161,16 @@ def execute_analysis(
 
         return result
 
-    # --------------------------------
+    # ----------------------------------------------
     # GROUPED ANALYSIS
-    # --------------------------------
+    # ----------------------------------------------
 
     if decision.group_column:
 
         if decision.group_column not in df.columns:
             raise ValueError(
-                f"Column not found: {decision.group_column}"
+                f"Column not found: "
+                f"{decision.group_column}"
             )
 
         result = group_by_analysis(
@@ -100,9 +182,9 @@ def execute_analysis(
 
         return result
 
-    # --------------------------------
+    # ----------------------------------------------
     # SIMPLE AGGREGATION
-    # --------------------------------
+    # ----------------------------------------------
 
     result = getattr(
         df[decision.value_column],
